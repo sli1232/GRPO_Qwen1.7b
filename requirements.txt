@@ -1,0 +1,13 @@
+# Core ML / training
+torch>=2.1.0
+transformers>=4.45.0
+trl>=0.13.0
+datasets>=3.0.0
+accelerate>=0.34.0
+peft>=0.13.0
+
+# Optional – uncomment to enable fast generation with vLLM
+# vllm>=0.6.0
+
+# Utilities
+numpy>=1.26.0
