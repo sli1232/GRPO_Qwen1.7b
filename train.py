@@ -57,15 +57,19 @@ def extract_boxed_content(text: str) -> str:
     return results[-1] if results else ""
 
 
-def extract_answer(text: str) -> str:
-    """Return the last \\boxed{...} answer from *text*."""
-    return extract_boxed_content(text)
 
 
 def make_prompt(example: dict) -> dict:
     """Convert a dataset row into the chat-message format expected by GRPOTrainer."""
-    problem = example.get("prompt") or example.get("problem") or ""
-    answer = example.get("answer") or extract_answer(example.get("solution", ""))
+    if isinstance(example.get("prompt"), list):
+        problem = " ".join([msg.get("content", "") for msg in example.get("prompt", [])])
+    else:
+        problem = example.get("prompt") or example.get("problem") or ""
+
+    if isinstance(example.get("reward_model"), dict):
+        answer = example.get("reward_model", {}).get("ground_truth", "")
+    else:
+        answer = example.get("reward_model") or extract_boxed_content(example.get("solution", ""))
     return {
         "prompt": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -84,10 +88,9 @@ def accuracy_reward(completions: list[str], answer: list[str], **kwargs) -> list
     """Reward +1 if the model's boxed answer matches the ground-truth, else 0."""
     rewards = []
     for completion, gt in zip(completions, answer):
-        predicted = extract_answer(completion)
+        predicted = extract_boxed_content(completion)
         rewards.append(1.0 if predicted == gt else 0.0)
     return rewards
-
 
 def format_reward(completions: list[str], **kwargs) -> list[float]:
     """Reward +0.5 if the completion contains <think>…</think> with content and \\boxed{...}."""
@@ -108,6 +111,7 @@ def format_reward(completions: list[str], **kwargs) -> list[float]:
 def main() -> None:
     # ---- Model & tokenizer -------------------------------------------------
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    // Ensure tokenizer has a pad token for batching; use eos_token if not defined.
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
