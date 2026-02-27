@@ -1,0 +1,52 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Training outputs
+output/
+checkpoints/
+wandb/
+tensorboard/
+runs/
+
+# Model artifacts
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.bin
+
+# Dataset caches
+.cache/
+cache/
+
+# Local configs
+*.local
+*.local.*
+config.local.*

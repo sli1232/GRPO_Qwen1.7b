@@ -83,20 +83,31 @@ def make_prompt(example: dict) -> dict:
 # Reward functions
 # ---------------------------------------------------------------------------
 
+def _completion_to_text(completion) -> str:
+    # completion is a list of chat messages: [{"role": "...", "content": "..."}]
+    if isinstance(completion, list):
+        for msg in completion:
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                return str(msg.get("content", ""))
+        # fallback: concatenate any content fields
+        return " ".join(str(m.get("content", "")) for m in completion if isinstance(m, dict))
+    return str(completion)
 
 def accuracy_reward(completions: list[str], answer: list[str], **kwargs) -> list[float]:
     """Reward +1 if the model's boxed answer matches the ground-truth, else 0."""
+    texts = [_completion_to_text(c) for c in completions]
     rewards = []
-    for completion, gt in zip(completions, answer):
+    for completion, gt in zip(texts, answer):
         predicted = extract_boxed_content(completion)
         rewards.append(1.0 if predicted == gt else 0.0)
     return rewards
 
 def format_reward(completions: list[str], **kwargs) -> list[float]:
     """Reward +0.5 if the completion contains <think>…</think> with content and \\boxed{...}."""
+    texts = [_completion_to_text(c) for c in completions]
     rewards = []
     think_pattern = re.compile(r"<think>.+?</think>", re.DOTALL)
-    for completion in completions:
+    for completion in texts:
         has_think = bool(think_pattern.search(completion))
         has_boxed = bool(extract_boxed_content(completion))
         rewards.append(0.5 if (has_think and has_boxed) else 0.0)
@@ -111,27 +122,29 @@ def format_reward(completions: list[str], **kwargs) -> list[float]:
 def main() -> None:
     # ---- Model & tokenizer -------------------------------------------------
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-    // Ensure tokenizer has a pad token for batching; use eos_token if not defined.
+    # Ensure tokenizer has a pad token for batching; use eos_token if not defined.
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
+        attn_implementation="sdpa",
         trust_remote_code=True,
     )
 
     # ---- Dataset ------------------------------------------------------------
     dataset = load_dataset(DATASET_NAME, split="train")
     dataset = dataset.map(make_prompt, remove_columns=dataset.column_names)
+    # use a small subset for demonstration; remove .select(...) for full training
+    dataset = dataset.select(range(500))
 
     # ---- GRPO training config -----------------------------------------------
     training_args = GRPOConfig(
         output_dir=OUTPUT_DIR,
         num_train_epochs=1,
         per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=3,
         learning_rate=1e-6,
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
@@ -139,9 +152,8 @@ def main() -> None:
         logging_steps=10,
         save_strategy="epoch",
         # GRPO-specific
-        max_prompt_length=512,
-        max_completion_length=2048,
-        num_generations=8,
+        max_completion_length=512,
+        num_generations=6,
         temperature=1.0,
         # Disable vLLM for broad compatibility; set use_vllm=True to speed up
         # generation if vLLM is installed.
