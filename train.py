@@ -109,7 +109,7 @@ def format_reward(completions: list[str], **kwargs) -> list[float]:
     boxed_pattern = re.compile(r"\\boxed\{.+?\}", re.DOTALL)
     for completion in texts:
         has_boxed = bool(boxed_pattern.search(completion))
-        rewards.append(0.5 if has_boxed else 0.0)
+        rewards.append(0 if has_boxed else -0.1)
     return rewards
 
 
