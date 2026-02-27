@@ -28,9 +28,7 @@ DATASET_NAME = "BytedTsinghua-SIA/DAPO-Math-17k"
 OUTPUT_DIR = "output/qwen-math-grpo"
 
 SYSTEM_PROMPT = (
-    "You are a helpful math assistant. "
-    "Think step by step inside <think>...</think> tags, "
-    "then provide the final answer inside \\boxed{...}."
+    "Please reason step by step, and put your final answer within \\boxed{}."
 )
 
 # ---------------------------------------------------------------------------
