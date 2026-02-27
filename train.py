@@ -153,6 +153,8 @@ def main() -> None:
         # Disable vLLM for broad compatibility; set use_vllm=True to speed up
         # generation if vLLM is installed.
         use_vllm=False,
+        report_to="wandb",
+        run_name="qwen-math-grpo",
     )
 
     # ---- Trainer ------------------------------------------------------------
