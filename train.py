@@ -18,10 +18,14 @@ try:
 except ImportError:
     parse = None
     verify = None
+    
+import os
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+os.environ["WANDB_PROJECT"] = "GRPO-Qwen-Math"
 
 MODEL_NAME = "Qwen/Qwen2.5-Math-1.5B"
 DATASET_NAME = "BytedTsinghua-SIA/DAPO-Math-17k"
@@ -130,9 +134,10 @@ def main() -> None:
 
     # ---- Dataset ------------------------------------------------------------
     dataset = load_dataset(DATASET_NAME, split="train")
+    # select 500 samples
+    dataset = dataset.shuffle(seed=42).select(range(500))
     dataset = dataset.map(make_prompt, remove_columns=dataset.column_names)
-    # use a small subset for demonstration; remove .select(...) for full training
-    dataset = dataset.select(range(500))
+
 
     # ---- GRPO training config -----------------------------------------------
     training_args = GRPOConfig(
@@ -154,7 +159,7 @@ def main() -> None:
         # generation if vLLM is installed.
         use_vllm=False,
         report_to="wandb",
-        run_name="qwen-math-grpo",
+        run_name="qwen-math-1.5b-grpo",
     )
 
     # ---- Trainer ------------------------------------------------------------
