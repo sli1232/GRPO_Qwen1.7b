@@ -140,6 +140,7 @@ def evaluate_model(
     max_new_tokens: int,
     temperature: float,
     max_samples: int | None,
+    output_handle,
 ) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     tokenizer.padding_side = "left"
@@ -169,12 +170,28 @@ def evaluate_model(
             max_new_tokens=max_new_tokens,
             temperature=temperature,
         )
-        for pred, gt in zip(outputs, gts):
+        for row, question, pred, gt in zip(batch, questions, outputs, gts):
             pred_norm = normalize_answer(pred)
             gt_norm = normalize_answer(gt)
-            if pred_norm == gt_norm:
+            is_correct = pred_norm == gt_norm
+            if is_correct:
                 correct += 1
             total += 1
+
+            output_record = {
+                "record_type": "prediction",
+                "model": model_name,
+                "data": os.path.basename(data_path),
+                "question": question,
+                "ground_truth": gt,
+                "prediction": pred,
+                "ground_truth_normalized": gt_norm,
+                "prediction_normalized": pred_norm,
+                "is_correct": is_correct,
+            }
+            if "id" in row:
+                output_record["id"] = row["id"]
+            output_handle.write(json.dumps(output_record, ensure_ascii=False) + "\n")
 
     accuracy = correct / total if total else 0.0
     return {
@@ -220,32 +237,71 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument(
+        "--output-jsonl",
+        default="output/eval_results.jsonl",
+        help="Path to save prediction records and summary metrics in JSONL format.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     files = [os.path.join(args.data_dir, f) for f in args.files]
+    output_dir = os.path.dirname(args.output_jsonl)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
-    for model_name in [args.base_model, args.model]:
-        print(f"\nEvaluating: {model_name}")
-        for path in files:
-            if not os.path.exists(path):
-                print(f"  Skipping missing file: {path}")
-                continue
-            metrics = evaluate_model(
-                model_name,
-                path,
-                batch_size=args.batch_size,
-                max_new_tokens=args.max_new_tokens,
-                temperature=args.temperature,
-                max_samples=args.max_samples,
-            )
-            acc = metrics["accuracy"] * 100
-            print(
-                f"  {metrics['data']}: {metrics['correct']}/{metrics['total']} "
-                f"({acc:.2f}%)"
-            )
+    with open(args.output_jsonl, "w", encoding="utf-8") as output_handle:
+        run_config = {
+            "record_type": "run_config",
+            "model": args.model,
+            "base_model": args.base_model,
+            "data_dir": args.data_dir,
+            "files": args.files,
+            "batch_size": args.batch_size,
+            "max_new_tokens": args.max_new_tokens,
+            "temperature": args.temperature,
+            "max_samples": args.max_samples,
+        }
+        output_handle.write(json.dumps(run_config, ensure_ascii=False) + "\n")
+
+        for model_name in [args.base_model, args.model]:
+            print(f"\nEvaluating: {model_name}")
+            for path in files:
+                if not os.path.exists(path):
+                    print(f"  Skipping missing file: {path}")
+                    continue
+                metrics = evaluate_model(
+                    model_name,
+                    path,
+                    batch_size=args.batch_size,
+                    max_new_tokens=args.max_new_tokens,
+                    temperature=args.temperature,
+                    max_samples=args.max_samples,
+                    output_handle=output_handle,
+                )
+                output_handle.write(
+                    json.dumps(
+                        {
+                            "record_type": "summary",
+                            "model": metrics["model"],
+                            "data": metrics["data"],
+                            "total": metrics["total"],
+                            "correct": metrics["correct"],
+                            "accuracy": metrics["accuracy"],
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                acc = metrics["accuracy"] * 100
+                print(
+                    f"  {metrics['data']}: {metrics['correct']}/{metrics['total']} "
+                    f"({acc:.2f}%)"
+                )
+
+    print(f"\nSaved JSONL output to: {args.output_jsonl}")
 
 
 if __name__ == "__main__":
