@@ -22,67 +22,20 @@ SYSTEM_PROMPT = (
 )
 
 
-def _extract_text_values(value) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        text = value.strip()
-        return [text] if text else []
-    if isinstance(value, (int, float, bool)):
-        return [str(value)]
-    if isinstance(value, list):
-        results = []
-        for item in value:
-            results.extend(_extract_text_values(item))
-        return results
-    if isinstance(value, dict):
-        results = []
-        preferred_keys = ["ground_truth", "final", "answer", "value", "label", "solution"]
-        for key in preferred_keys:
-            if key in value:
-                results.extend(_extract_text_values(value.get(key)))
-        if not results:
-            for item in value.values():
-                results.extend(_extract_text_values(item))
-        return results
-    return []
+def extract_ground_truth(row: dict) -> str:
+    value = row.get("ground_truth", "")
+    return value.strip() if isinstance(value, str) else ""
 
 
-def extract_ground_truth_candidates(row: dict) -> list[str]:
-    candidates = []
-    for key in ["ground_truth", "answer", "solution"]:
-        candidates.extend(_extract_text_values(row.get(key)))
-
-    deduped = []
-    seen = set()
-    for candidate in candidates:
-        if candidate not in seen:
-            seen.add(candidate)
-            deduped.append(candidate)
-
-    return deduped or [""]
-
-
-def answers_match(prediction: str, ground_truth_candidates: list[str]) -> tuple[bool, str]:
+def answers_match(prediction: str, ground_truth: str) -> bool:
     if parse is not None and verify is not None:
         try:
             prediction_parsed = parse(prediction)
-            for candidate in ground_truth_candidates:
-                try:
-                    candidate_parsed = parse(candidate)
-                except Exception:
-                    continue
-                if bool(verify(prediction_parsed, candidate_parsed)):
-                    return True, candidate
+            ground_truth_parsed = parse(ground_truth)
+            return bool(verify(prediction_parsed, ground_truth_parsed))
         except Exception:
             pass
-
-    prediction_text = prediction.strip()
-    for candidate in ground_truth_candidates:
-        if prediction_text == candidate.strip():
-            return True, candidate
-
-    return False, (ground_truth_candidates[0] if ground_truth_candidates else "")
+    return prediction.strip() == ground_truth.strip()
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -181,7 +134,7 @@ def evaluate_model(
     ) as pbar:
         for batch in batched(rows, batch_size):
             questions = [row.get("question", "") for row in batch]
-            gt_candidates_batch = [extract_ground_truth_candidates(row) for row in batch]
+            gt_batch = [extract_ground_truth(row) for row in batch]
             outputs = generate_answers(
                 model,
                 tokenizer,
@@ -190,8 +143,8 @@ def evaluate_model(
                 temperature=temperature,
             )
             batch_lines = []
-            for row, question, pred, gt_candidates in zip(batch, questions, outputs, gt_candidates_batch):
-                is_correct, matched_gt = answers_match(pred, gt_candidates)
+            for row, question, pred, gt in zip(batch, questions, outputs, gt_batch):
+                is_correct = answers_match(pred, gt)
                 if is_correct:
                     correct += 1
                 total += 1
@@ -201,8 +154,7 @@ def evaluate_model(
                     "model": model_name,
                     "data": os.path.basename(data_path),
                     "question": question,
-                    "ground_truth": matched_gt,
-                    "ground_truth_candidates": gt_candidates,
+                    "ground_truth": gt,
                     "prediction": pred,
                     "is_correct": is_correct,
                 }
