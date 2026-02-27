@@ -170,6 +170,7 @@ def evaluate_model(
             max_new_tokens=max_new_tokens,
             temperature=temperature,
         )
+        batch_lines = []
         for row, question, pred, gt in zip(batch, questions, outputs, gts):
             pred_norm = normalize_answer(pred)
             gt_norm = normalize_answer(gt)
@@ -191,7 +192,9 @@ def evaluate_model(
             }
             if "id" in row:
                 output_record["id"] = row["id"]
-            output_handle.write(json.dumps(output_record, ensure_ascii=False) + "\n")
+            batch_lines.append(json.dumps(output_record, ensure_ascii=False) + "\n")
+
+        output_handle.writelines(batch_lines)
 
     accuracy = correct / total if total else 0.0
     return {
