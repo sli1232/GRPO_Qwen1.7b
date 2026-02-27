@@ -28,7 +28,7 @@ DATASET_NAME = "BytedTsinghua-SIA/DAPO-Math-17k"
 OUTPUT_DIR = "output/qwen-math-grpo"
 
 SYSTEM_PROMPT = (
-    "Please reason step by step, and put your final answer within \\boxed{}."
+    "Please provide your final answer within \\boxed{}."
 )
 
 # ---------------------------------------------------------------------------
@@ -36,29 +36,9 @@ SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 
-def extract_boxed_content(text: str) -> str:
-    """Extract the content of the last \\boxed{...} in *text*, handling nested braces."""
-    results = []
-    idx = 0
-    while True:
-        start = text.find(r"\boxed{", idx)
-        if start == -1:
-            break
-        # Walk forward to find the matching closing brace.
-        depth = 0
-        content_start = start + len(r"\boxed{")
-        for i in range(content_start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                if depth == 0:
-                    results.append(text[content_start:i].strip())
-                    idx = i + 1
-                    break
-                depth -= 1
-        else:
-            break  # unmatched brace – stop
-    return results[-1] if results else ""
+def extract_ground_truth(row: dict) -> str:
+    value = row.get("ground_truth", "")
+    return value.strip() if isinstance(value, str) else ""
 
 
 
@@ -70,10 +50,11 @@ def make_prompt(example: dict) -> dict:
     else:
         problem = example.get("prompt") or example.get("problem") or ""
 
-    if isinstance(example.get("reward_model"), dict):
-        answer = example.get("reward_model", {}).get("ground_truth", "")
-    else:
-        answer = example.get("reward_model") or extract_boxed_content(example.get("solution", ""))
+    answer = extract_ground_truth(example)
+    if not answer and isinstance(example.get("reward_model"), dict):
+        answer = str(example.get("reward_model", {}).get("ground_truth", "")).strip()
+    if not answer and isinstance(example.get("reward_model"), str):
+        answer = example.get("reward_model", "").strip()
     return {
         "prompt": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -107,9 +88,7 @@ def answers_match(prediction: str, ground_truth: str) -> bool:
         except Exception:
             pass
 
-    predicted = extract_boxed_content(prediction) or prediction
-    expected = extract_boxed_content(ground_truth) or ground_truth
-    return predicted.strip() == expected.strip()
+    return prediction.strip() == ground_truth.strip()
 
 def accuracy_reward(completions: list[str], answer: list[str], **kwargs) -> list[float]:
     """Reward +1 if the model answer matches ground-truth via math_verify, else 0."""
@@ -120,14 +99,13 @@ def accuracy_reward(completions: list[str], answer: list[str], **kwargs) -> list
     return rewards
 
 def format_reward(completions: list[str], **kwargs) -> list[float]:
-    """Reward +0.5 if the completion contains <think>…</think> with content and \\boxed{...}."""
+    """Reward +0.5 if the completion contains \\boxed{...}."""
     texts = [_completion_to_text(c) for c in completions]
     rewards = []
-    think_pattern = re.compile(r"<think>.+?</think>", re.DOTALL)
+    boxed_pattern = re.compile(r"\\boxed\{.+?\}", re.DOTALL)
     for completion in texts:
-        has_think = bool(think_pattern.search(completion))
-        has_boxed = bool(extract_boxed_content(completion))
-        rewards.append(0.5 if (has_think and has_boxed) else 0.0)
+        has_boxed = bool(boxed_pattern.search(completion))
+        rewards.append(0.5 if has_boxed else 0.0)
     return rewards
 
 
