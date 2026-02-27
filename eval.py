@@ -27,14 +27,24 @@ def extract_ground_truth(row: dict) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def parse_answer(text: str):
+    if parse is None:
+        return None
+    try:
+        return parse(text)
+    except Exception:
+        return None
+
+
 def answers_match(prediction: str, ground_truth: str) -> bool:
     if parse is not None and verify is not None:
-        try:
-            prediction_parsed = parse(prediction)
-            ground_truth_parsed = parse(ground_truth)
-            return bool(verify(prediction_parsed, ground_truth_parsed))
-        except Exception:
-            pass
+        prediction_parsed = parse_answer(prediction)
+        ground_truth_parsed = parse_answer(ground_truth)
+        if prediction_parsed is not None and ground_truth_parsed is not None:
+            try:
+                return bool(verify(prediction_parsed, ground_truth_parsed))
+            except Exception:
+                pass
     return prediction.strip() == ground_truth.strip()
 
 
@@ -144,6 +154,8 @@ def evaluate_model(
             )
             batch_lines = []
             for row, question, pred, gt in zip(batch, questions, outputs, gt_batch):
+                pred_parsed = parse_answer(pred)
+                gt_parsed = parse_answer(gt)
                 is_correct = answers_match(pred, gt)
                 if is_correct:
                     correct += 1
@@ -155,7 +167,9 @@ def evaluate_model(
                     "data": os.path.basename(data_path),
                     "question": question,
                     "ground_truth": gt,
+                    "ground_truth_parsed": str(gt_parsed) if gt_parsed is not None else None,
                     "prediction": pred,
+                    "prediction_parsed": str(pred_parsed) if pred_parsed is not None else None,
                     "is_correct": is_correct,
                 }
                 if "id" in row:
