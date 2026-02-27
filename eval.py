@@ -128,6 +128,7 @@ def generate_answers(
         do_sample=do_sample,
         temperature=temperature if do_sample else None,
         top_p=1.0,
+        pad_token_id=tokenizer.pad_token_id,
     )
     gen_tokens = generated[:, inputs["input_ids"].shape[1]:]
     return tokenizer.batch_decode(gen_tokens, skip_special_tokens=True)
