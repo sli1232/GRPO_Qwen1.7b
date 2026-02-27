@@ -9,6 +9,7 @@ import re
 from typing import Iterable
 
 import torch
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 SYSTEM_PROMPT = (
@@ -143,6 +144,7 @@ def evaluate_model(
     max_samples: int | None,
     output_handle,
 ) -> dict:
+    model_label = os.path.basename(model_name.rstrip("/")) or model_name
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
@@ -160,42 +162,49 @@ def evaluate_model(
 
     correct = 0
     total = 0
+    total_rows = len(rows)
+    with tqdm(
+        total=total_rows,
+        desc=f"{model_label} | {os.path.basename(data_path)}",
+        unit="ex",
+        leave=False,
+    ) as pbar:
+        for batch in batched(rows, batch_size):
+            questions = [row.get("question", "") for row in batch]
+            gts = [extract_ground_truth(row) for row in batch]
+            outputs = generate_answers(
+                model,
+                tokenizer,
+                questions,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            batch_lines = []
+            for row, question, pred, gt in zip(batch, questions, outputs, gts):
+                pred_norm = normalize_answer(pred)
+                gt_norm = normalize_answer(gt)
+                is_correct = pred_norm == gt_norm
+                if is_correct:
+                    correct += 1
+                total += 1
 
-    for batch in batched(rows, batch_size):
-        questions = [row.get("question", "") for row in batch]
-        gts = [extract_ground_truth(row) for row in batch]
-        outputs = generate_answers(
-            model,
-            tokenizer,
-            questions,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-        )
-        batch_lines = []
-        for row, question, pred, gt in zip(batch, questions, outputs, gts):
-            pred_norm = normalize_answer(pred)
-            gt_norm = normalize_answer(gt)
-            is_correct = pred_norm == gt_norm
-            if is_correct:
-                correct += 1
-            total += 1
+                output_record = {
+                    "record_type": "prediction",
+                    "model": model_name,
+                    "data": os.path.basename(data_path),
+                    "question": question,
+                    "ground_truth": gt,
+                    "prediction": pred,
+                    "ground_truth_normalized": gt_norm,
+                    "prediction_normalized": pred_norm,
+                    "is_correct": is_correct,
+                }
+                if "id" in row:
+                    output_record["id"] = row["id"]
+                batch_lines.append(json.dumps(output_record, ensure_ascii=False) + "\n")
 
-            output_record = {
-                "record_type": "prediction",
-                "model": model_name,
-                "data": os.path.basename(data_path),
-                "question": question,
-                "ground_truth": gt,
-                "prediction": pred,
-                "ground_truth_normalized": gt_norm,
-                "prediction_normalized": pred_norm,
-                "is_correct": is_correct,
-            }
-            if "id" in row:
-                output_record["id"] = row["id"]
-            batch_lines.append(json.dumps(output_record, ensure_ascii=False) + "\n")
-
-        output_handle.writelines(batch_lines)
+            output_handle.writelines(batch_lines)
+            pbar.update(len(batch))
 
     accuracy = correct / total if total else 0.0
     return {
