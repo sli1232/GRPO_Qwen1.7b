@@ -36,7 +36,7 @@ SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 
-def extract_ground_truth(row: dict) -> str:
+def extract_answer(row: dict) -> str:
     value = row.get("ground_truth", "")
     return value.strip() if isinstance(value, str) else ""
 
@@ -50,7 +50,7 @@ def make_prompt(example: dict) -> dict:
     else:
         problem = example.get("prompt") or example.get("problem") or ""
 
-    answer = extract_ground_truth(example)
+    answer = extract_answer(example)
     if not answer and isinstance(example.get("reward_model"), dict):
         answer = str(example.get("reward_model", {}).get("ground_truth", "")).strip()
     if not answer and isinstance(example.get("reward_model"), str):
