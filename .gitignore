@@ -50,3 +50,4 @@ cache/
 *.local
 *.local.*
 config.local.*
+.env
