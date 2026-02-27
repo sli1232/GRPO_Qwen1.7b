@@ -13,6 +13,12 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import GRPOConfig, GRPOTrainer
 
+try:
+    from math_verify import parse, verify
+except ImportError:
+    parse = None
+    verify = None
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -93,13 +99,26 @@ def _completion_to_text(completion) -> str:
         return " ".join(str(m.get("content", "")) for m in completion if isinstance(m, dict))
     return str(completion)
 
+
+def answers_match(prediction: str, ground_truth: str) -> bool:
+    if parse is not None and verify is not None:
+        try:
+            pred_parsed = parse(prediction)
+            gt_parsed = parse(ground_truth)
+            return bool(verify(pred_parsed, gt_parsed))
+        except Exception:
+            pass
+
+    predicted = extract_boxed_content(prediction) or prediction
+    expected = extract_boxed_content(ground_truth) or ground_truth
+    return predicted.strip() == expected.strip()
+
 def accuracy_reward(completions: list[str], answer: list[str], **kwargs) -> list[float]:
-    """Reward +1 if the model's boxed answer matches the ground-truth, else 0."""
+    """Reward +1 if the model answer matches ground-truth via math_verify, else 0."""
     texts = [_completion_to_text(c) for c in completions]
     rewards = []
     for completion, gt in zip(texts, answer):
-        predicted = extract_boxed_content(completion)
-        rewards.append(1.0 if predicted == gt else 0.0)
+        rewards.append(1.0 if answers_match(completion, gt) else 0.0)
     return rewards
 
 def format_reward(completions: list[str], **kwargs) -> list[float]:

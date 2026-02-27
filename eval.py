@@ -5,12 +5,17 @@ Evaluate a trained Qwen math model against the base model on JSONL test sets.
 import argparse
 import json
 import os
-import re
 from typing import Iterable
 
 import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+try:
+    from math_verify import parse, verify
+except ImportError:
+    parse = None
+    verify = None
 
 SYSTEM_PROMPT = (
     "You are a helpful math assistant. "
@@ -19,60 +24,67 @@ SYSTEM_PROMPT = (
 )
 
 
-def extract_boxed_content(text: str) -> str:
-    """Extract the content of the last \\boxed{...} in *text*, handling nested braces."""
-    results = []
-    idx = 0
-    while True:
-        start = text.find(r"\\boxed{", idx)
-        if start == -1:
-            break
-        depth = 0
-        content_start = start + len(r"\\boxed{")
-        for i in range(content_start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                if depth == 0:
-                    results.append(text[content_start:i].strip())
-                    idx = i + 1
-                    break
-                depth -= 1
-        else:
-            break
-    return results[-1] if results else ""
+def _extract_text_values(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    if isinstance(value, list):
+        results = []
+        for item in value:
+            results.extend(_extract_text_values(item))
+        return results
+    if isinstance(value, dict):
+        results = []
+        preferred_keys = ["ground_truth", "final", "answer", "value", "label", "solution"]
+        for key in preferred_keys:
+            if key in value:
+                results.extend(_extract_text_values(value.get(key)))
+        if not results:
+            for item in value.values():
+                results.extend(_extract_text_values(item))
+        return results
+    return []
 
 
-def normalize_answer(text: str) -> str:
-    """Normalize answers for robust exact-match comparison."""
-    text = text.strip()
-    if text.startswith("$") and text.endswith("$"):
-        text = text[1:-1].strip()
-    # Remove surrounding \boxed{...} if present.
-    boxed = extract_boxed_content(text)
-    if boxed:
-        text = boxed
-    # Remove whitespace to tolerate LaTeX spacing differences.
-    text = re.sub(r"\s+", "", text)
-    return text
+def extract_ground_truth_candidates(row: dict) -> list[str]:
+    candidates = []
+    for key in ["ground_truth", "answer", "solution"]:
+        candidates.extend(_extract_text_values(row.get(key)))
+
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            deduped.append(candidate)
+
+    return deduped or [""]
 
 
-def extract_ground_truth(row: dict) -> str:
-    """Extract a comparable ground-truth answer from various JSONL schemas."""
-    raw = row.get("ground_truth", row.get("answer", ""))
-    if isinstance(raw, dict):
-        # Common keys across math datasets.
-        for key in ["ground_truth", "final", "answer", "value", "label"]:
-            value = raw.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-        return ""
-    if isinstance(raw, list):
-        for value in raw:
-            if isinstance(value, str) and value.strip():
-                return value
-        return ""
-    return str(raw) if raw is not None else ""
+def answers_match(prediction: str, ground_truth_candidates: list[str]) -> tuple[bool, str]:
+    if parse is not None and verify is not None:
+        try:
+            prediction_parsed = parse(prediction)
+            for candidate in ground_truth_candidates:
+                try:
+                    candidate_parsed = parse(candidate)
+                except Exception:
+                    continue
+                if bool(verify(prediction_parsed, candidate_parsed)):
+                    return True, candidate
+        except Exception:
+            pass
+
+    prediction_text = prediction.strip()
+    for candidate in ground_truth_candidates:
+        if prediction_text == candidate.strip():
+            return True, candidate
+
+    return False, (ground_truth_candidates[0] if ground_truth_candidates else "")
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -171,7 +183,7 @@ def evaluate_model(
     ) as pbar:
         for batch in batched(rows, batch_size):
             questions = [row.get("question", "") for row in batch]
-            gts = [extract_ground_truth(row) for row in batch]
+            gt_candidates_batch = [extract_ground_truth_candidates(row) for row in batch]
             outputs = generate_answers(
                 model,
                 tokenizer,
@@ -180,10 +192,8 @@ def evaluate_model(
                 temperature=temperature,
             )
             batch_lines = []
-            for row, question, pred, gt in zip(batch, questions, outputs, gts):
-                pred_norm = normalize_answer(pred)
-                gt_norm = normalize_answer(gt)
-                is_correct = pred_norm == gt_norm
+            for row, question, pred, gt_candidates in zip(batch, questions, outputs, gt_candidates_batch):
+                is_correct, matched_gt = answers_match(pred, gt_candidates)
                 if is_correct:
                     correct += 1
                 total += 1
@@ -193,10 +203,9 @@ def evaluate_model(
                     "model": model_name,
                     "data": os.path.basename(data_path),
                     "question": question,
-                    "ground_truth": gt,
+                    "ground_truth": matched_gt,
+                    "ground_truth_candidates": gt_candidates,
                     "prediction": pred,
-                    "ground_truth_normalized": gt_norm,
-                    "prediction_normalized": pred_norm,
                     "is_correct": is_correct,
                 }
                 if "id" in row:

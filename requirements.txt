@@ -16,3 +16,4 @@ peft>=0.13.0
 
 # Utilities
 numpy>=1.26.0
+math-verify
